@@ -1,0 +1,13 @@
+[package]
+name = "avm-spider"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+borsh = { version = "1", features = ["derive"] }
+schemars = "1.2.1"
+serde = { version = "1", features = ["derive"] }
+sov-modules-macros = { git = "https://github.com/Sovereign-Labs/sovereign-sdk", branch = "nightly", default-features = false }
