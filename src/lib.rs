@@ -7,6 +7,11 @@ pub type Address = String;
 pub type ChannelId = u64;
 pub type SubchannelId = u64;
 pub type Digest = [u8; 32];
+pub type VramSize = u32; // MiB
+pub type RamSize = u32; // MiB
+pub type CoreNum = u32;
+pub type Frequency = u32; // MHz
+pub type ExecuteSpeed = u64; // instructions per second
 
 #[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
 #[serialize(Borsh, Serde)]
@@ -43,6 +48,7 @@ pub enum MockDaPayload {
     Task(Box<Task>),
     Event(Event),
     Condition(Condition),
+    ExecuteNode(ExecuteNode),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
@@ -371,4 +377,112 @@ pub struct Condition {
     pub enc_describer: EncryptedBundle,
     /// Proof that condition encrypted fields were produced correctly.
     pub encryption_proof: ZkProof,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
+#[serialize(Borsh, Serde)]
+#[serde(rename_all = "snake_case")]
+pub struct ExecuteNode {
+    // identity
+    pub address: Address,
+    pub endpoint: String, // 网络地址
+    pub permanent_pk: Vec<u8>,
+    pub session_pk: Vec<u8>,
+    pub signature: Vec<u8>,
+
+    // software ability
+    pub encryption_scheme: Vec<EncryptionScheme>,
+    pub signature_scheme: Vec<SignatureScheme>,
+    pub commitment_scheme: Vec<Commitment>,
+
+    // hardware ability
+    pub gpu_model: Option<GpuModel>,
+    pub cpu_model: CpuModel,
+    pub ram_cap: RamSize,
+    pub ram_type: RamType,
+    pub ntwk_up_bandwidth: i64, // Mbps
+    pub ntwk_down_bandwidth: i64, // Mbps
+
+    // performance
+    pub recent_10_tasks_speed: Option<ExecuteSpeed>,
+    pub recent_50_tasks_speed: Option<ExecuteSpeed>,
+    pub recent_100_tasks_speed: Option<ExecuteSpeed>,
+    pub recent_500_tasks_speed: Option<ExecuteSpeed>,
+    pub sum_tasks_speed: Option<ExecuteSpeed>,
+    pub latency_variance: Option<i128>,
+    pub interrupt_tasks: Option<i64>,
+    pub successful_tasks: Option<i64>,
+    pub reg_time: u64,
+    pub alive: bool,
+}
+#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
+#[serialize(Borsh, Serde)]
+#[serde(rename_all = "snake_case")]
+pub struct GpuBase {
+    pub vram_size: VramSize,
+    pub vram_type: VramType,
+    pub tensor_core_num: CoreNum,
+    pub cuda_core_num: CoreNum,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
+#[serialize(Borsh, Serde)]
+#[serde(rename_all = "snake_case")]
+pub struct CpuBase {
+    pub avx256: bool,
+    pub avx512: bool,
+    pub aes_ni: bool,
+    pub core_num: CoreNum,
+    pub architecture: CpuArchitecture,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
+#[serialize(Borsh, Serde)]
+#[serde(rename_all = "snake_case")]
+pub enum GpuModel {
+    Nvidia(GpuBase),
+    Amd(GpuBase),
+    Igpu(GpuBase),
+    Unknown(String, GpuBase),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
+#[serialize(Borsh, Serde)]
+#[serde(rename_all = "snake_case")]
+pub enum CpuModel {
+    Intel(CpuBase),
+    Amd(CpuBase),
+    Unknown(String, CpuBase),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
+#[serialize(Borsh, Serde)]
+#[serde(rename_all = "snake_case")]
+pub enum CpuArchitecture {
+    Arm,
+    X86,
+    X86_64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
+#[serialize(Borsh, Serde)]
+#[serde(rename_all = "snake_case")]
+pub enum VramType {
+    GDDR4(Frequency),
+    GDDR5(Frequency),
+    GDDR6(Frequency),
+    Unknown(String, Frequency),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
+#[serialize(Borsh, Serde)]
+#[serde(rename_all = "snake_case")]
+pub enum RamType {
+    DDR3(Frequency),
+    DDR4(Frequency),
+    DDR5(Frequency),
+    LPDDR3(Frequency),
+    LPDDR4(Frequency),
+    LPDDR5(Frequency),
+    Unknown(String, Frequency),
 }
