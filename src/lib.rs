@@ -23,10 +23,6 @@ pub struct MockDaMetadata {
     pub rollup_id: Digest,
     /// Deterministic producer-supplied id for indexing, replay checks, and deduplication.
     pub message_id: Digest,
-    /// Public routing channel. Nodes subscribed to this channel scan the message.
-    pub channel_id: ChannelId,
-    /// Public routing subchannel. Nodes scan their subchannels and try to decrypt matching data.
-    pub subchannel_id: SubchannelId,
     /// Commitment to the serialized payload carried by this envelope.
     pub payload_commitment: Commitment,
 }
@@ -48,7 +44,8 @@ pub enum MockDaPayload {
     Task(Box<Task>),
     Event(Event),
     Condition(Condition),
-    ExecuteNode(ExecuteNode),
+    ExecuteNode(Box<ExecuteNode>),
+    SmartContract(SmartContract),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
@@ -150,6 +147,8 @@ pub struct EncryptedBundle {
 #[serde(rename_all = "snake_case")]
 pub struct Ciphertext {
     pub encryption_scheme: EncryptionScheme,
+    pub channel_id: ChannelId,
+    pub subchannel_id: Option<SubchannelId>,
     /// Key version or committee epoch used to derive the decryption key.
     pub key_epoch: u64,
     /// Identifier of the concrete encryption key. This avoids guessing across key rotations.
@@ -216,60 +215,6 @@ pub enum ProofSystem {
 #[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
 #[serialize(Borsh, Serde)]
 #[serde(rename_all = "snake_case")]
-pub struct OriginFuture {
-    pub smart_contract_addr: Address,
-    pub billing_addr: Address,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
-#[serialize(Borsh, Serde)]
-#[serde(rename_all = "snake_case")]
-pub struct OriginTask {
-    pub future_addr: Address,
-    pub workgroup: Vec<WorkGroup>,
-    pub status: Status,
-    pub workers_vote_proof: Vec<u8>,
-    pub checkpoints: Vec<OriginCheckpoint>,
-    pub input: Vec<u8>,
-    pub output: Vec<u8>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
-#[serialize(Borsh, Serde)]
-#[serde(rename_all = "snake_case")]
-pub struct OriginEvent {
-    pub action: Action,
-    pub future_addr: Address,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
-#[serialize(Borsh, Serde)]
-#[serde(rename_all = "snake_case")]
-pub struct OriginCondition {
-    pub observation_data_addr: Address,
-    pub describer: Describer,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
-#[serialize(Borsh, Serde)]
-#[serde(rename_all = "snake_case")]
-pub struct WorkGroup {
-    /// Workers compete within one group; groups provide fallback ordering.
-    pub workers: Vec<Address>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
-#[serialize(Borsh, Serde)]
-#[serde(rename_all = "snake_case")]
-pub struct Describer {
-    /// Version of the describer byte format, owned by the condition subsystem.
-    pub schema_version: u32,
-    pub data: Vec<u8>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
-#[serialize(Borsh, Serde)]
-#[serde(rename_all = "snake_case")]
 pub enum Status {
     Working,
     Finished,
@@ -289,24 +234,10 @@ pub struct ExecutionError {
 #[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
 #[serialize(Borsh, Serde)]
 #[serde(rename_all = "snake_case")]
-pub enum Action {
-    Do,
-    Delete,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
-#[serialize(Borsh, Serde)]
-#[serde(rename_all = "snake_case")]
-pub struct OriginCheckpoint {
-    pub index: u64,
-    pub data: Vec<u8>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
-#[serialize(Borsh, Serde)]
-#[serde(rename_all = "snake_case")]
 pub struct Checkpoint {
     pub index: u64,
+    /// The address of a worker who hands in the checkpoint.
+    pub hand_in_worker_address: Address,
     /// Commitment to the checkpoint payload before worker-specific encryption.
     pub checkpoint_commitment: Commitment,
     /// Commitment to the state observed before this checkpoint executes.
@@ -319,18 +250,21 @@ pub struct Checkpoint {
     pub encrypted_payload: EncryptedBundle,
     /// Proof that checkpoint execution was computed correctly.
     pub execution_proof: ZkProof,
+    /// Proof that payload was encrypted correctly.
+    pub encryption_proof: ZkProof,
+
+    /// Verification of the Checkpoints, it can't append by hand-in worker
+    pub verification_ok: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
 #[serialize(Borsh, Serde)]
 #[serde(rename_all = "snake_case")]
 pub struct Future {
-    /// Encrypted smart contract address, routed through the envelope channel/subchannel.
-    pub enc_smart_contract_addr: EncryptedBundle,
+    /// Raw smart contract address, unencrypted because caller:Task has been implemented.
+    pub smart_contract_addr: Address,
     /// Anonymous billing address; intentionally not encrypted.
     pub billing_addr: Address,
-    /// Proof that encrypted fields were produced from the committed plaintext correctly.
-    pub encryption_proof: ZkProof,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
@@ -400,7 +334,7 @@ pub struct ExecuteNode {
     pub cpu_model: CpuModel,
     pub ram_cap: RamSize,
     pub ram_type: RamType,
-    pub ntwk_up_bandwidth: i64, // Mbps
+    pub ntwk_up_bandwidth: i64,   // Mbps
     pub ntwk_down_bandwidth: i64, // Mbps
 
     // performance
@@ -415,6 +349,17 @@ pub struct ExecuteNode {
     pub reg_time: u64,
     pub alive: bool,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
+#[serialize(Borsh, Serde)]
+#[serde(rename_all = "snake_case")]
+pub struct SmartContract {
+    pub address: Address,
+    pub encrypt_body: Option<EncryptedBundle>,
+    pub raw_body: Option<Vec<u8>>,
+    pub encryption_proof: ZkProof,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
 #[serialize(Borsh, Serde)]
 #[serde(rename_all = "snake_case")]
