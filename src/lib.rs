@@ -5,7 +5,6 @@ pub const AVM_MOCK_DA_SCHEMA_VERSION: u32 = 1;
 
 pub type Address = String;
 pub type ChannelId = u64;
-pub type SubchannelId = u64;
 pub type Digest = [u8; 32];
 pub type VramSize = u32; // MiB
 pub type RamSize = u32; // MiB
@@ -138,8 +137,8 @@ pub enum CommitmentScheme {
 pub struct EncryptedBundle {
     /// Commitment to the encrypted bundle bytes, not necessarily to the plaintext.
     pub commitment: Commitment,
-    /// One ciphertext per intended decryptor in the channel/subchannel.
-    pub ciphertexts: Vec<Ciphertext>,
+    /// Only one encryption is needed because new scheme (TEE BLS channel shared key)
+    pub ciphertexts: Ciphertext,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
@@ -147,8 +146,8 @@ pub struct EncryptedBundle {
 #[serde(rename_all = "snake_case")]
 pub struct Ciphertext {
     pub encryption_scheme: EncryptionScheme,
+    /// Target nodes ID sum hash
     pub channel_id: ChannelId,
-    pub subchannel_id: Option<SubchannelId>,
     /// Key version or committee epoch used to derive the decryption key.
     pub key_epoch: u64,
     /// Identifier of the concrete encryption key. This avoids guessing across key rotations.
@@ -263,8 +262,66 @@ pub struct Checkpoint {
 pub struct Future {
     /// Raw smart contract address, unencrypted because caller:Task has been implemented.
     pub smart_contract_addr: Address,
-    /// Anonymous billing address; intentionally not encrypted.
-    pub billing_addr: Address,
+}
+
+/// 可序列化的 Celestia Blob 定位信息，用于替代 (Height, Namespace, Commitment) 三元组。
+#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
+#[serialize(Borsh, Serde)]
+#[serde(rename_all = "snake_case")]
+pub struct BlobRef {
+    /// 区块高度，celestia_types::Height 内部为 NonZeroU64。
+    pub height: u64,
+    /// 名称空间的完整字节表示（包括 version 和 id），用于重建 Namespace。
+    pub namespace_bytes: Vec<u8>,
+    /// Blob 承诺的原始字节，长度固定为 32。
+    pub blob_commitment: Vec<u8>,
+}
+
+// 从 celestia_types 的三元组转换为 BlobRef
+impl
+    From<(
+        celestia_types::Height,
+        celestia_types::nmt::Namespace,
+        celestia_types::blob::Commitment,
+    )> for BlobRef
+{
+    fn from(
+        (height, ns, commitment): (
+            celestia_types::Height,
+            celestia_types::nmt::Namespace,
+            celestia_types::blob::Commitment,
+        ),
+    ) -> Self {
+        // The infallible Into conversion provides the commitment bytes.
+        let commitment_bytes: [u8; 32] = commitment.into();
+        BlobRef {
+            height: height.value(),
+            namespace_bytes: ns.as_bytes().to_vec(),
+            blob_commitment: commitment_bytes.to_vec(),
+        }
+    }
+}
+
+// 反向转换
+impl From<BlobRef>
+    for (
+        celestia_types::Height,
+        celestia_types::nmt::Namespace,
+        celestia_types::blob::Commitment,
+    )
+{
+    fn from(val: BlobRef) -> Self {
+        let height = celestia_types::Height::try_from(val.height).expect("Height must be non-zero"); // Height implements TryFrom<u64>
+        let version = val.namespace_bytes[0];
+        let id = &val.namespace_bytes[1..];
+        let ns = celestia_types::nmt::Namespace::new(version, id).expect("invalid namespace bytes");
+        let commitment_array: [u8; 32] = val
+            .blob_commitment
+            .try_into()
+            .expect("blob commitment must be exactly 32 bytes");
+        let commitment = celestia_types::blob::Commitment::new(commitment_array); // use ::new
+        (height, ns, commitment)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
@@ -283,10 +340,12 @@ pub struct Task {
     pub checkpoints: Vec<Checkpoint>,
     /// Worker-readable task input.
     pub input: EncryptedBundle,
-    /// Worker-readable smart contract output.
+    /// Caller-readable smart contract output.
     pub output: EncryptedBundle,
     /// Proof that task encrypted fields were produced correctly.
     pub encryption_proof: ZkProof,
+    /// Reference to Event Blob Position (serializable wrapper)
+    pub event_blob_ref_pos: BlobRef,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
@@ -299,6 +358,8 @@ pub struct Event {
     pub enc_future_addr: EncryptedBundle,
     /// Proof that event encrypted fields were produced correctly.
     pub encryption_proof: ZkProof,
+    /// Billing signature; its submitter equals to billing address; its signed_commitment equals to hash(enc_future_addr, input)
+    pub billing_sign: DaAuthorization,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
@@ -355,9 +416,16 @@ pub struct ExecuteNode {
 #[serde(rename_all = "snake_case")]
 pub struct SmartContract {
     pub address: Address,
-    pub encrypt_body: Option<EncryptedBundle>,
-    pub raw_body: Option<Vec<u8>>,
+    pub body: SmartContractBody,
     pub encryption_proof: ZkProof,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
+#[serialize(Borsh, Serde)]
+#[serde(rename_all = "snake_case")]
+pub enum SmartContractBody {
+    Raw(Vec<u8>),
+    Encrypted(EncryptedBundle),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, JsonSchema)]
